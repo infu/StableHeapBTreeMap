@@ -627,6 +627,25 @@ module {
     nextKey: ?K;
   };
 
+  public func iterScanLimitInfu<K, V>(node: Node<K, V>, compare: (K, K) -> O.Order, lowerBound: K, upperBound: K, dir: Direction): Iter.Iter<(K,V)> {
+    switch(dir, node) {
+      case (#fwd, #leaf(leafNode)) {
+        iterScanLimitLeafForwardInfu<K, V>(leafNode, compare, lowerBound, upperBound);
+      };
+      case (#bwd, #leaf(leafNode)) {
+        iterScanLimitLeafReverseInfu<K, V>(leafNode, compare, lowerBound, upperBound);
+      };
+      case (#fwd, #internal(internalNode)) {
+        { next = func() : (?(K,V)){ return null } }
+        // iterScanLimitInternalForwardInfu<K, V>(internalNode, compare: (K, K) -> O.Order, lowerBound: K, upperBound: K, limit: Nat);
+      };
+      case (#bwd, #internal(internalNode)) {
+        { next = func() : (?(K,V)){ return null } }
+        // iterScanLimitInternalReverseInfu<K, V>(internalNode, compare: (K, K) -> O.Order, lowerBound: K, upperBound: K, limit: Nat);
+      };
+    }
+  };
+
   func iterScanLimit<K, V>(node: Node<K, V>, compare: (K, K) -> O.Order, lowerBound: K, upperBound: K, dir: Direction, limit: Nat): IntermediateScanResult<K, V> {
     switch(dir, node) {
       case (#fwd, #leaf(leafNode)) {
@@ -643,6 +662,67 @@ module {
       };
     }
   };
+
+
+  //////
+func iterScanLimitLeafForwardInfu<K, V>({ data }: Leaf<K, V>, compare: (K, K) -> O.Order, lowerBound: K, upperBound: K): Iter.Iter<(K, V)> {
+    var elementIndex:Nat = 0;
+    var first : Bool = true;
+    var finished : Bool = false;
+    return {  
+      next = func() : (?(K,V)) {
+        if (finished) { return null };
+          if (first) {
+                first := false;
+                elementIndex := switch(BS.binarySearchNode(data.kvs, compare, lowerBound, data.count)) {
+                case (#keyFound(idx)) { idx };
+                case (#notFound(idx)) { 
+                  // skip this leaf if lower bound is greater than all elements in the leaf
+                  if (idx >= data.count) { 
+                    return null
+                  };
+                  idx 
+                };
+              };
+            };
+        
+          label l while (true) {
+            switch(data.kvs[elementIndex]) {
+              case (?(k, v)) {
+                switch(compare(k, upperBound)) {
+                  // iterating forward and key is greater than the upper bound
+                  // Set the limit to 0 and return the buffer to signal stopping the scan in the calling context. There is no next key
+                  case (#greater) { 
+                    return null
+                  };
+                  // Key is equal to the upper bound. Add the element to the buffer, then set the limit to 0 and return the buffer to signal stopping the scan in the calling context. There is no next key
+                  case (#equal) {
+                    elementIndex += 1;
+                    if (elementIndex >= data.count) { finished := true; };
+                    return ?(k, v)
+                  };
+                  // Iterating forward and key is less than the upper bound. Add the element to the buffer, decrement from the limit, and increase the element index
+                  case (#less) {
+                    elementIndex += 1;
+                    if (elementIndex >= data.count) { finished := true; };
+                    return ?(k, v);
+                  };
+                }
+              };
+              case null { return null };
+            };
+          };
+
+          null;
+      }
+    }
+  };
+
+  //////
+
+
+
+
 
   func iterScanLimitLeafForward<K, V>({ data }: Leaf<K, V>, compare: (K, K) -> O.Order, lowerBound: K, upperBound: K, limit: Nat): IntermediateScanResult<K, V> {
     let resultBuffer: Buffer.Buffer<(K, V)> = Buffer.Buffer(0);
@@ -728,7 +808,78 @@ module {
     Debug.trap("UNREACHABLE_ERROR: file a bug report! In iterScanLimitLeafForward, reached a catch-all case that should not happen with a remaining limit =" # Nat.toText(remainingLimit));
   };
 
-  
+  /////
+func iterScanLimitLeafReverseInfu<K, V>({ data }: Leaf<K, V>, compare: (K, K) -> O.Order, lowerBound: K, upperBound: K): Iter.Iter<(K, V)> {
+    
+    var elementIndex:Nat = 0;
+    var first : Bool = true;
+    var finished : Bool = false;
+    return {
+      next = func() : (?(K,V)) {
+
+    if (finished) return null;
+
+    if (first) {
+        first := false;
+        elementIndex := switch(BS.binarySearchNode(data.kvs, compare, upperBound, data.count)) {
+        case (#keyFound(idx)) { idx };
+        case (#notFound(idx)) { 
+          // skip this leaf if upper bound is less than all elements in the leaf
+          if (idx == 0) { 
+            return null
+          };
+
+          // We are iterating in reverse and did not find the upper bound, choose the previous element
+          // idx is not 0, so we can safely subtract 1
+          idx - 1: Nat;
+        };
+      };
+    };
+
+    label l while (true) {
+      switch(data.kvs[elementIndex]) {
+        case (?(k, v)) {
+          switch(compare(k, lowerBound)) {
+            // Iterating in reverse and key is less than the lower bound.
+            // Set the limit to 0 and return the buffer to signal stopping the scan in the calling context. There is no next key
+            case (#less) { 
+              return null
+            };
+            // Key is equal to the lower bound. Add the element to the buffer, then set the limit to 0 and return the buffer to signal stopping the scan in the calling context. There is no next key
+            case (#equal) {
+              if (elementIndex != 0) {elementIndex -= 1;} else {
+                finished := true 
+              };
+              return ?(k, v);
+              
+            };
+            // Iterating in reverse and key is greater than the lower bound. Add the element to the buffer, decrement from the limit, and decrement the element index
+            case (#greater) {
+
+              if (elementIndex != 0) {elementIndex -= 1;} else {
+                finished := true 
+              };
+
+              return ?(k, v);
+              
+            }
+          }
+        };
+        case null { return null };
+      };
+    };
+
+
+    null
+
+    
+      }
+    }
+  };
+
+
+  /////
+
   func iterScanLimitLeafReverse<K, V>({ data }: Leaf<K, V>, compare: (K, K) -> O.Order, lowerBound: K, upperBound: K, limit: Nat): IntermediateScanResult<K, V> {
     let resultBuffer: Buffer.Buffer<(K, V)> = Buffer.Buffer(0);
     var remainingLimit = limit;
